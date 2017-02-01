@@ -5,12 +5,15 @@
 #include <ros/ros.h>
 #include <camera_info_manager/camera_info_manager.h>
 #include <image_transport/image_transport.h>
+#include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/fill_image.h>
 
 /** @file
 
     @brief ROS driver interface for UEYE-compatible USB digital cameras.
 
 */
+#define BUF85SIZE 1048576
 
 namespace driver_flir
 {
@@ -33,11 +36,18 @@ namespace driver_flir
     void publish(const sensor_msgs::ImagePtr &image);
     void read(char ep[],char EP_error[], int r, int actual_length, unsigned char buf[]);
 
+    void print_bulk_result(char ep[],char EP_error[], int r, int actual_length, unsigned char buf[]);
+
     libusb_context *context;
     struct libusb_device_handle *devh;
 
     unsigned char buf[1048576];
     int actual_length;
+   	char EP81_error[50];
+    char EP83_error[50];
+    char EP85_error[50];
+    int buf85pointer = 0;
+    unsigned char buf85[BUF85SIZE];
 
     enum states_t {INIT, INIT_1, INIT_2, ASK_ZIP, ASK_VIDEO, POOL_FRAME, ERROR};
     states_t states;
@@ -60,6 +70,7 @@ namespace driver_flir
     ros::NodeHandle priv_nh_;             // private node handle
     ros::NodeHandle camera_nh_;           // camera name space handle
     std::string camera_name_;             // camera name
+    std::string camera_frame_;             // camera name
 
     /** image transport interfaces */
     boost::shared_ptr<image_transport::ImageTransport> it_;

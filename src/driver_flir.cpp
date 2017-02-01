@@ -14,6 +14,7 @@ namespace driver_flir
     priv_nh_(priv_nh),
     camera_nh_(camera_nh),
     camera_name_("FLIR_USB"),
+    camera_frame_("flir"),
     isOk(true),
     states(INIT),
     setup_states(SETUP_INIT),
@@ -42,12 +43,47 @@ namespace driver_flir
     image_pub_.publish(image);
   }
 
+
+  void DriverFlir::print_bulk_result(char ep[],char EP_error[], int r, int actual_length, unsigned char buf[]) {
+          time_t now1;
+          int i;
+
+          now1 = time(NULL);
+          if (r < 0) {
+                 if (strcmp (EP_error, libusb_error_name(r))!=0) {
+                     strcpy(EP_error, libusb_error_name(r));
+                     fprintf(stderr, "\n: %s >>>>>>>>>>>>>>>>>bulk transfer (in) %s: %s\n", ctime(&now1), ep , libusb_error_name(r));
+                     sleep(1);
+                 }
+                 //return 1;
+         } else {
+             ROS_INFO("\n: %s bulk read EP %s, actual length %d\nHEX:\n",ctime(&now1), ep ,actual_length);
+             // write frame to file
+   /*
+             char filename[100];
+             sprintf(filename, "EP%s#%05i.bin",ep,filecount);
+             filecount++;
+             FILE *file = fopen(filename, "wb");
+             fwrite(buf, 1, actual_length, file);
+             fclose(file);
+   */
+           // hex print of first byte
+             /*for (i = 0; i <  (((200)<(actual_length))?(200):(actual_length)); i++) {
+                     ROS_INFO(" %02x", buf[i]);
+             }
+
+             ROS_INFO("\nSTRING:\n");
+             for (i = 0; i <  (((200)<(actual_length))?(200):(actual_length)); i++) {
+                     if(buf[i]>31) {ROS_INFO("%c", buf[i]);}
+             }
+             ROS_INFO("\n");*/
+
+         }
+  }
+
   void DriverFlir::read(char ep[],char EP_error[], int r, int actual_length, unsigned char buf[]) {
     // reset buffer if the new chunk begins with magic bytes or the buffer size limit is exceeded
     unsigned char magicbyte[4]={0xEF,0xBE,0x00,0x00};
-    #define BUF85SIZE 1048576
-    int buf85pointer = 0;
-    unsigned char buf85[BUF85SIZE];
 
     if  ((strncmp (( const char *)buf, ( const char *)magicbyte,4)==0 ) || ((buf85pointer + actual_length) >= BUF85SIZE)) {
       //printf(">>>>>>>>>>>reset buff pointer<<<<<<<<<<<<<\n");
@@ -62,7 +98,7 @@ namespace driver_flir
     if  ((strncmp (( const char *)buf85, ( const char *)magicbyte,4)!=0 )) {
       //reset buff pointer
       buf85pointer=0;
-      //printf("Reset buffer because of bad Magic Byte!\n");
+      ROS_ERROR("Reset buffer because of bad Magic Byte!");
       return;
     }
 
@@ -76,6 +112,7 @@ namespace driver_flir
 
     if ( (FrameSize+28) > (buf85pointer) ) {
       // wait for next chunk
+      ROS_ERROR("wait for next chunk");
       return;
     }
 
@@ -87,11 +124,36 @@ namespace driver_flir
     fps_t = (19*fps_t+10000000/(((t2.tv_sec * 1000000) + t2.tv_usec) - ((t1.tv_sec * 1000000) + t1.tv_usec)))/20;
 
     ROS_INFO("#%lld/10 fps:",fps_t);
-    for (i = 0; i <  StatusSize; i++) {
+    ROS_INFO("FrameSize %d ",FrameSize);
+    ROS_INFO("ThermalSize %d ",ThermalSize);
+    ROS_INFO("JpgSize %d ",JpgSize);
+    ROS_INFO("StatusSize %d ",StatusSize);
+
+    /*for (i = 0; i <  StatusSize; i++) {
       v=28+ThermalSize+JpgSize+i;
       if(buf85[v]>31) {ROS_INFO("%c", buf85[v]);}
     }
-    ROS_INFO("\n");
+    ROS_INFO("\n");*/
+
+    unsigned short pix[160*120];
+    for (uint8_t y = 0; y < 120; ++y) {
+      for (uint8_t x = 0; x < 160; ++x) {
+        if (x<80) {
+          v = buf85[2*(y * 164 + x) +32]+256*buf85[2*(y * 164 + x) +33];
+        }else {
+          v = buf85[2*(y * 164 + x) +32+4]+256*buf85[2*(y * 164 + x) +33+4];
+        }
+        pix[y * 160 + x] = v;   // unsigned char!!
+      }
+    }
+
+    cv_bridge::CvImage out_msg;
+    out_msg.header.frame_id = camera_frame_;
+    out_msg.encoding = sensor_msgs::image_encodings::TYPE_16UC1; // Or whatever
+    out_msg.image    = 	cv::Mat (120, 160, CV_16UC1, pix);
+
+    publish(out_msg.toImageMsg());
+
 /*
     buf85pointer=0;
 
@@ -319,12 +381,26 @@ namespace driver_flir
 
       case POOL_FRAME:
       {
-        char EP85_error[50]="";
         // endless loop
         // poll Frame Endpoints 0x85
         // don't change timeout=100ms !!
-        r = libusb_bulk_transfer(devh, 0x85, buf, sizeof(buf), &actual_length, 100);
+        r = libusb_bulk_transfer(devh, 0x85, buf, sizeof(buf), &actual_length, 200);
+        switch(r){
+          case LIBUSB_ERROR_TIMEOUT:
+            ROS_ERROR("LIBUSB_ERROR_TIMEOUT");
+            break;
+          case LIBUSB_ERROR_PIPE:
+            ROS_ERROR("LIBUSB_ERROR_PIPE");
+            break;
+          case LIBUSB_ERROR_OVERFLOW:
+            ROS_ERROR("LIBUSB_ERROR_OVERFLOW");
+            break;
+          case LIBUSB_ERROR_NO_DEVICE:
+            ROS_ERROR("LIBUSB_ERROR_NO_DEVICE");
+            break;
+        }
         if (actual_length > 0){
+          ROS_INFO("T'es une FRAME %d", actual_length );
           read("0x85",EP85_error, r, actual_length, buf);
         }
       }
@@ -334,6 +410,13 @@ namespace driver_flir
         isOk = false;
         break;
     }
+
+    // poll Endpoints 0x81, 0x83
+    r = libusb_bulk_transfer(devh, 0x81, buf, sizeof(buf), &actual_length, 10);
+    print_bulk_result("0x81",EP81_error, r, actual_length, buf);
+
+    r = libusb_bulk_transfer(devh, 0x83, buf, sizeof(buf), &actual_length, 10);
+    print_bulk_result("0x83",EP83_error, r, actual_length, buf);
   }
 
   void DriverFlir::setup(void){
