@@ -1,6 +1,6 @@
 #include <boost/format.hpp>
-
-#include <driver_base/SensorLevels.h>
+#include <opencv2/highgui.hpp>
+//#include <driver_base/SensorLevels.h>
 #include "driver_flir.h"
 
 
@@ -22,7 +22,9 @@ namespace driver_flir
     vendor_id(0x09cb),
     product_id(0x1996),
     it_(new image_transport::ImageTransport(camera_nh_)){
-    image_pub_ = priv_nh.advertise<sensor_msgs::Image>("image_raw", 1);
+    image_pub_ = priv_nh.advertise<sensor_msgs::Image>("ir_16b/image_raw", 1);
+    image_rgb_pub_ = priv_nh.advertise<sensor_msgs::Image>("rgb/image_raw", 1);
+    image_8b_pub_ = priv_nh.advertise<sensor_msgs::Image>("ir_8b/image_raw", 1);
   }
 
   DriverFlir::~DriverFlir() {
@@ -115,7 +117,7 @@ namespace driver_flir
       ROS_ERROR("wait for next chunk");
       return;
     }
-
+	ros::Time stamp = ros::Time::now();
     int i,v;
     // get a full frame, first print status
     t1=t2;
@@ -148,81 +150,43 @@ namespace driver_flir
     }
 
     cv_bridge::CvImage out_msg;
+	cv::Mat im16 = cv::Mat (120, 160, CV_16UC1, pix);
     out_msg.header.frame_id = camera_frame_;
+	out_msg.header.stamp = stamp;
     out_msg.encoding = sensor_msgs::image_encodings::TYPE_16UC1; // Or whatever
-    out_msg.image    = 	cv::Mat (120, 160, CV_16UC1, pix);
+    out_msg.image    = 	im16;
 
-    publish(out_msg.toImageMsg());
-
-/*
-    buf85pointer=0;
-
-    unsigned short pix[160*120];  // original Flir 16 Bit RAW
-    int x, y;
-    unsigned char *fb_proc, *fb_proc2, *fb_proc4;
-    unsigned short *fb_proc3;
-
-    fb_proc = malloc(160 * 120); // 8 Bit gray buffer
-    fb_proc2 = malloc(160 * 120 * 3); // 16-bit gray buffer (include in a 24 bits image)
-    fb_proc3 = malloc(160 * 120 * 2); // 16-bit gray buffer
-    fb_proc4 = malloc(160 * 120 * 3); // 8x8x8 bits
-
-    for (y = 0; y < 120; ++y) {
-      for (x = 0; x < 160; ++x) {
-        if (x<80) {
-          v = buf85[2*(y * 164 + x) +32]+256*buf85[2*(y * 164 + x) +33];
-        }else {
-          v = buf85[2*(y * 164 + x) +32+4]+256*buf85[2*(y * 164 + x) +33+4];
-        }
-        pix[y * 160 + x] = v;   // unsigned char!!
-      }
-    }
+    image_pub_.publish(out_msg.toImageMsg());
 
 
-    // Max & Min value used for scaling
-    // (limits: -20° - +75° | 1600 - 5852)
-    //
-    // Theorical IR Sensor sensitivity : 0.1°C
-
-    int max = 3847; // <=>  40°C
-    int min = 2934; // <=>  20°C
-
-
-    int delta = max - min;
-
-    int scale = 0x10000 / delta; // (2¹⁶/delta <=> 65536/delta)
-
-    for (y = 0; y < 120; ++y) {
-      for (x = 0; x < 160; ++x) {
-        int v = (pix[y * 160 + x] - min) * scale;
-
-        // fb_proc3 is the 16-Bit Gray Image
-        fb_proc3[y * 160 + x] = v; //unsigned short
-
-        // High and low 8-bits part of the 16-Bit values
-        uint8_t v_low = v & 0xff;
-        uint8_t v_high = v >> 8;
-
-        // fb_proc is the 8-bit gray scale frame buffer
-        fb_proc[y * 160 + x] = v_high;   // unsigned char!!
-
-        // fb_proc2 is the 16-bit gray scale frame buffer.
-        // It's inside a 24 bits image but the with only channels set.
-        // The 1st one contains the first 8 bits and the second one the
-        // last 8 bits.
-        fb_proc2[3*y * 160 + x*3] = 0;
-        fb_proc2[(3*y * 160 + x*3) + 1] = v_high;
-        fb_proc2[(3*y * 160 + x*3) + 2] = v_low >> 2;
+	cv::Mat rawRgb = cv::Mat(1, JpgSize, CV_8UC1, &buf85[28+ThermalSize]);
+	cv::Mat decodedImage  =  cv::imdecode( rawRgb, CV_LOAD_IMAGE_COLOR);
+	cv_bridge::CvImage out_rgb;
+	out_rgb.header.frame_id = camera_frame_;
+	out_rgb.header.stamp = stamp;
+    out_rgb.encoding = sensor_msgs::image_encodings::TYPE_8UC3; // Or whatever
+	out_rgb.image   =  decodedImage;
+    image_rgb_pub_.publish(out_rgb.toImageMsg());
 
 
-        // fb_proc4 is an 24bit RGB buffer
-        const int *colormap = colormap_ironblack;
+// Max & Min value used for scaling
+// (limits: -20° - +75° | 1600 - 5852)
+// 
+// Theorical IR Sensor sensitivity : 0.1°C
+	int max = 3847; // <=>  40°C
+	int min = 2934; // <=>  20°C
+	int delta = max - min;
+	cv::Mat im8b = 255*(im16-min)/(max-min);
+    im8b.convertTo(im8b , CV_8UC1);
+	cv_bridge::CvImage out_8b;
+    out_8b.header.frame_id = camera_frame_;
+	out_8b.header.stamp = stamp;
+    out_8b.encoding = sensor_msgs::image_encodings::TYPE_8UC1; // Or whatever
+    out_8b.image    =  im8b;
+	image_8b_pub_.publish(out_8b.toImageMsg());
 
-        fb_proc4[3*y * 160 + x*3] = colormap[3 * v_high];   // unsigned char!!
-        fb_proc4[(3*y * 160 + x*3)+1] = colormap[3 * v_high + 1];   // unsigned char!!
-        fb_proc4[(3*y * 160 + x*3)+2] = colormap[3 * v_high + 2];   // unsigned char!!
-      }
-    }*/
+
+
   }
 
   void DriverFlir::poll(void){

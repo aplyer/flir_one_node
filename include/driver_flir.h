@@ -75,5 +75,7 @@ namespace driver_flir
     /** image transport interfaces */
     boost::shared_ptr<image_transport::ImageTransport> it_;
     ros::Publisher image_pub_;
+    ros::Publisher image_rgb_pub_;
+    ros::Publisher image_8b_pub_;
   };
 };
