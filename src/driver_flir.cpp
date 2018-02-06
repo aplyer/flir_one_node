@@ -161,12 +161,14 @@ namespace driver_flir
 
 	cv::Mat rawRgb = cv::Mat(1, JpgSize, CV_8UC1, &buf85[28+ThermalSize]);
 	cv::Mat decodedImage  =  cv::imdecode( rawRgb, CV_LOAD_IMAGE_COLOR);
-	cv_bridge::CvImage out_rgb;
-	out_rgb.header.frame_id = camera_frame_;
-	out_rgb.header.stamp = stamp;
-    out_rgb.encoding = sensor_msgs::image_encodings::TYPE_8UC3; // Or whatever
-	out_rgb.image   =  decodedImage;
-    image_rgb_pub_.publish(out_rgb.toImageMsg());
+	cv::cvtColor(decodedImage, decodedImage, cv::COLOR_BGR2RGB);
+	std_msgs::Header header;
+	header.frame_id = camera_frame_;
+	header.stamp = stamp;
+	
+	sensor_msgs::ImagePtr msg = cv_bridge::CvImage(header,"rgb8", decodedImage).toImageMsg();
+	msg->encoding = "rgb8" ;
+        image_rgb_pub_.publish(msg);
 
 
 // Max & Min value used for scaling
