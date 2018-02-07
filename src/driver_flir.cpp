@@ -1,8 +1,8 @@
 #include <boost/format.hpp>
 #include <opencv2/highgui.hpp>
-//#include <driver_base/SensorLevels.h>
 #include "driver_flir.h"
 
+//#define DEBUG_
 
 namespace driver_flir
 {
@@ -60,26 +60,6 @@ namespace driver_flir
                  //return 1;
          } else {
              ROS_INFO("\n: %s bulk read EP %s, actual length %d\nHEX:\n",ctime(&now1), ep ,actual_length);
-             // write frame to file
-   /*
-             char filename[100];
-             sprintf(filename, "EP%s#%05i.bin",ep,filecount);
-             filecount++;
-             FILE *file = fopen(filename, "wb");
-             fwrite(buf, 1, actual_length, file);
-             fclose(file);
-   */
-           // hex print of first byte
-             /*for (i = 0; i <  (((200)<(actual_length))?(200):(actual_length)); i++) {
-                     ROS_INFO(" %02x", buf[i]);
-             }
-
-             ROS_INFO("\nSTRING:\n");
-             for (i = 0; i <  (((200)<(actual_length))?(200):(actual_length)); i++) {
-                     if(buf[i]>31) {ROS_INFO("%c", buf[i]);}
-             }
-             ROS_INFO("\n");*/
-
          }
   }
 
@@ -88,17 +68,13 @@ namespace driver_flir
     unsigned char magicbyte[4]={0xEF,0xBE,0x00,0x00};
 
     if  ((strncmp (( const char *)buf, ( const char *)magicbyte,4)==0 ) || ((buf85pointer + actual_length) >= BUF85SIZE)) {
-      //printf(">>>>>>>>>>>reset buff pointer<<<<<<<<<<<<<\n");
       buf85pointer=0;
     }
-
-    //printf("actual_length %d !!!!!\n", actual_length);
 
     memmove(buf85+buf85pointer, buf, actual_length);
     buf85pointer=buf85pointer+actual_length;
 
     if  ((strncmp (( const char *)buf85, ( const char *)magicbyte,4)!=0 )) {
-      //reset buff pointer
       buf85pointer=0;
       ROS_ERROR("Reset buffer because of bad Magic Byte!");
       return;
@@ -109,8 +85,6 @@ namespace driver_flir
     uint32_t ThermalSize = buf85[12] + (buf85[13] << 8) + (buf85[14] << 16) + (buf85[15] << 24);
     uint32_t JpgSize     = buf85[16] + (buf85[17] << 8) + (buf85[18] << 16) + (buf85[19] << 24);
     uint32_t StatusSize  = buf85[20] + (buf85[21] << 8) + (buf85[22] << 16) + (buf85[23] << 24);
-
-    //printf("FrameSize= %d (+28=%d), ThermalSize %d, JPG %d, StatusSize %d, Pointer %d\n",FrameSize,FrameSize+28, ThermalSize, JpgSize,StatusSize,buf85pointer);
 
     if ( (FrameSize+28) > (buf85pointer) ) {
       // wait for next chunk
@@ -125,17 +99,13 @@ namespace driver_flir
     // fps as moving average over last 20 frames
     fps_t = (19*fps_t+10000000/(((t2.tv_sec * 1000000) + t2.tv_usec) - ((t1.tv_sec * 1000000) + t1.tv_usec)))/20;
 
+#ifdef DEBUG_
     ROS_INFO("#%lld/10 fps:",fps_t);
     ROS_INFO("FrameSize %d ",FrameSize);
     ROS_INFO("ThermalSize %d ",ThermalSize);
     ROS_INFO("JpgSize %d ",JpgSize);
     ROS_INFO("StatusSize %d ",StatusSize);
-
-    /*for (i = 0; i <  StatusSize; i++) {
-      v=28+ThermalSize+JpgSize+i;
-      if(buf85[v]>31) {ROS_INFO("%c", buf85[v]);}
-    }
-    ROS_INFO("\n");*/
+#endif
 
     unsigned short pix[160*120];
     for (uint8_t y = 0; y < 120; ++y) {
@@ -171,10 +141,10 @@ namespace driver_flir
         image_rgb_pub_.publish(msg);
 
 
-// Max & Min value used for scaling
-// (limits: -20° - +75° | 1600 - 5852)
-// 
-// Theorical IR Sensor sensitivity : 0.1°C
+    // Max & Min value used for scaling
+    // (limits: -20° - +75° | 1600 - 5852)
+    // 
+    // Theorical IR Sensor sensitivity : 0.1°C
 	int max = 3847; // <=>  40°C
 	int min = 2934; // <=>  20°C
 	int delta = max - min;
